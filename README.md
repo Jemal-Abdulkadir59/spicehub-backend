@@ -75,7 +75,7 @@ cat backup.sql | docker exec -i spicehub-backend-postgres-1 psql -U postgres -d 
 ```
 spicehub-backend/
 │── docker-compose.yml
-│── backup.sql (DB backdup)
+│── backup.sql (DB backup)
 │── note
 │── setup
 │── 
