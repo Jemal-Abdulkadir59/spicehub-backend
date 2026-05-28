@@ -75,34 +75,11 @@ cat backup.sql | docker exec -i spicehub-backend-postgres-1 psql -U postgres -d 
 ```
 spicehub-backend/
 │── docker-compose.yml
-│── backup.sql (ignored)
-│── src/ (if using Node.js)
-│── migrations/
-│── metadata/
+│── backup.sql (DB backdup)
+│── note
+│── setup
+│── 
 ```
-
----
-
-## 🔐 Environment Variables
-
-Create a `.env` file if required:
-
-```
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=yourpassword
-POSTGRES_DB=postgres
-HASURA_GRAPHQL_ADMIN_SECRET=yoursecret
-```
-
----
-
-## 🚫 Important Notes
-
-* Do NOT push `backup.sql` to GitHub (add to `.gitignore`)
-* Use Docker volumes for persistent database storage
-* Store secrets securely (AWS SSM, environment variables)
-
----
 
 ## 📌 Future Improvements
 
@@ -117,14 +94,3 @@ HASURA_GRAPHQL_ADMIN_SECRET=yoursecret
 
 **Jemal Abdulkadir**
 
----
-
-## ⭐ Contributing
-
-Pull requests are welcome. For major changes, please open an issue first.
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License.
