@@ -1,0 +1,683 @@
+🍽️ Professional Database Relationship Diagram (Text-Based)
+
+            ┌──────────────────────┐
+            │        users         │
+            │──────────────────────│
+            │ id (PK)              │
+            │ full_name            │
+            │ email                │
+            │ phone                │
+            │ role (customer/admin │
+            │       /kitchen/rider)│
+            └──────────┬───────────┘
+                       │
+                       │ 1-to-many (user_id)
+                       ▼
+              ┌──────────────────┐
+              │      orders      │
+              │──────────────────│
+              │ id (PK)          │
+              │ user_id (FK→users)│
+              │ total_amount     │
+              │ status           │
+              │ payment_status   │
+              │ delivery_address │
+              │ created_at       │
+              └─────┬─────┬──────┘
+                    │     │
+        ┌───────────┘     └──────────────┐
+        │                                │
+        ▼                                ▼
+┌──────────────────┐           ┌──────────────────┐
+│  order_items     │           │    payments      │
+│──────────────────│           │──────────────────│
+│ id (PK)          │           │ id (PK)          │
+│ order_id (FK→orders)│        │ order_id (FK→orders)│
+│ menu_item_id (FK→menu_items) │ method           │
+│ quantity         │           │ amount           │
+│ unit_price       │           │ status           │
+│ total_price (gen)│           │ transaction_id   │
+└──────────────────┘           └──────────────────┘
+
+        │
+        ▼
+┌──────────────────┐
+│   menu_items     │
+│──────────────────│
+│ id (PK)          │
+│ category_id (FK→menu_categories)│
+│ name             │
+│ price            │
+│ description      │
+│ image_url        │
+└──────────────────┘
+
+        │
+        ▼
+┌──────────────────┐
+│ menu_categories  │
+│──────────────────│
+│ id (PK)          │
+│ name             │
+│ description      │
+└──────────────────┘
+
+
+Additional 1-to-1 or 1-to-many:
+
+orders ───▶ kitchen_orders (1-to-1, order_id)
+orders ───▶ deliveries (1-to-1, order_id)
+orders ───▶ reviews (1-to-many, order_id)
+users (chef) ───▶ kitchen_orders (1-to-many, chef_id)
+users (rider) ───▶ deliveries (1-to-many, rider_id)
+
+🧩 Entity Descriptions
+| Table               | Purpose                                                  |
+| ------------------- | -------------------------------------------------------- |
+| **users**           | Stores all users: customers, admins, chefs, and riders.  |
+| **menu_categories** | Groups menu items (e.g., “Pizza”, “Drinks”, “Desserts”). |
+| **menu_items**      | Individual meals or items customers can order.           |
+| **orders**          | Stores customer order info (linked to users).            |
+| **order_items**     | Each item in an order (linked to menu_items).            |
+| **payments**        | Payment transactions per order.                          |
+| **kitchen_orders**  | Tracks kitchen prep per order, linked to chef.           |
+| **deliveries**      | Tracks delivery per order, linked to rider.              |
+| **reviews**         | Customer feedback on completed orders.                   |
+
+🧠 Notes
+total_price in order_items → generated column:
+total_price NUMERIC(10,2) GENERATED ALWAYS AS (quantity * unit_price) STORED
+
+🧩 automatically update updated_at
+⚙️ 1. Create a Trigger Function (Reusable for All Tables)
+This function will automatically update updated_at whenever a row is modified.
+
+-- Function: auto_update_timestamp
+CREATE OR REPLACE FUNCTION auto_update_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+⚙️ 2. Attach Trigger to Tables That Have updated_at
+Here’s the trigger setup for all tables that contain an updated_at column.
+-- USERS
+CREATE TRIGGER set_timestamp_users
+BEFORE UPDATE ON public.users
+FOR EACH ROW
+EXECUTE FUNCTION auto_update_timestamp();
+
+-- ORDERS
+CREATE TRIGGER set_timestamp_orders
+BEFORE UPDATE ON public.orders
+FOR EACH ROW
+EXECUTE FUNCTION auto_update_timestamp();
+
+-- MENU ITEMS
+CREATE TRIGGER set_timestamp_menu_items
+BEFORE UPDATE ON public.menu_items
+FOR EACH ROW
+EXECUTE FUNCTION auto_update_timestamp();
+
+-- MENU CATEGORIES (optional)
+CREATE TRIGGER set_timestamp_menu_categories
+BEFORE UPDATE ON public.menu_categories
+FOR EACH ROW
+EXECUTE FUNCTION auto_update_timestamp();
+
+-- You can add more as needed, e.g. reviews, kitchen_orders, deliveries if you add updated_at columns later.
+
+🧩 Auto-Set paid_at When Status Becomes “paid”
+🧠 You want to automate this — because manually adding paid_at every time is not practical.
+Let’s extend the trigger so it works for both "paid" and "completed" statuses 👇
+
+If you want to automate that, you can create a trigger:
+
+-- 1️⃣ Step 1 — Create/Replace the Trigger Function
+CREATE OR REPLACE FUNCTION set_paid_at_on_payment_status()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- If status is 'paid' or 'completed' and paid_at is not already set
+  IF (NEW.status IN ('paid', 'completed')) AND (NEW.paid_at IS NULL) THEN
+    NEW.paid_at := NOW();
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2️⃣ Step 2 — Attach the Trigger to the Payments Table
+DROP TRIGGER IF EXISTS set_paid_at_trigger ON payments;
+
+CREATE TRIGGER set_paid_at_trigger
+BEFORE INSERT OR UPDATE ON payments
+FOR EACH ROW
+EXECUTE FUNCTION set_paid_at_on_payment_status();
+
+
+
+✅ So now, whenever the status is updated to "paid", the paid_at column automatically fills 
+in with the current timestamp.
+
+🧩Auto-generate a transaction ID
+✅ Fix Option 1: Auto-generate a transaction ID
+if you prefer readable transaction codes (like TX-20251016120001), you can use a trigger:
+
+CREATE OR REPLACE FUNCTION generate_transaction_id()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.transaction_id IS NULL THEN
+    NEW.transaction_id := 'TX-' || TO_CHAR(NOW(), 'YYYYMMDDHH24MISS') || '-' || SUBSTRING(gen_random_uuid()::TEXT, 1, 8);
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER set_transaction_id
+BEFORE INSERT ON payments
+FOR EACH ROW
+EXECUTE FUNCTION generate_transaction_id();
+
+✅ Fix Option 2: Auto-fill started_at when status = 'preparing'
+
+If you prefer automation like the payments trigger, use this trigger:
+
+CREATE OR REPLACE FUNCTION set_started_at_on_preparing()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF (NEW.status = 'preparing') AND (NEW.started_at IS NULL) THEN
+    NEW.started_at := NOW();
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS set_started_at_trigger ON kitchen_orders;
+
+CREATE TRIGGER set_started_at_trigger
+BEFORE INSERT OR UPDATE ON kitchen_orders
+FOR EACH ROW
+EXECUTE FUNCTION set_started_at_on_preparing();
+
+✅ Recommended: Add Smart Trigger Logic
+
+Let’s add automatic timestamp handling, so you don’t get “null value” errors later.
+
+🔹 Trigger: Auto-set pickup and delivered times
+
+CREATE OR REPLACE FUNCTION set_delivery_timestamps()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- When rider picks up the order
+  IF NEW.status = 'picked_up' AND NEW.pickup_time IS NULL THEN
+    NEW.pickup_time := NOW();
+  END IF;
+
+  -- When order is delivered
+  IF NEW.status = 'delivered' AND NEW.delivered_time IS NULL THEN
+    NEW.delivered_time := NOW();
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS set_delivery_timestamps_trigger ON deliveries;
+
+CREATE TRIGGER set_delivery_timestamps_trigger
+BEFORE INSERT OR UPDATE ON deliveries
+FOR EACH ROW
+EXECUTE FUNCTION set_delivery_timestamps();
+
+✅ This ensures:
+No NULL constraint issues.
+Automatic time tracking for pickup and delivery.
+
+🧩automate clearing a user’s cart after checkout using Hasura Event Triggers (preferred for automation) or Actions 
+(if you want a custom endpoint). Let me break it down clearly.
+1️⃣ Using Hasura Event Triggers (Recommended)
+vent triggers let Hasura listen for changes in your database (like a new order) and automatically run a webhook 
+or function.
+
+Step-by-step
+Go to Hasura Console → Events → Event Triggers.
+Click Create → Event Trigger.
+Trigger Name: clear_cart_after_order
+Schema / Table: orders
+Operations: INSERT (when a new order is created)
+Webhook URL:
+This is your backend endpoint (e.g., http://localhost:3000/clear-cart) that will receive the event payload.
+Save the trigger.
+
+✅ What happens:
+When a user places an order, Hasura fires the event.
+Your webhook receives it and deletes all cart_items for that user automatically.
+The trigger listens only for INSERT events on the orders table.
+Every time a new order is created, Hasura sends a payload to your webhook (your backend).
+The webhook receives the user_id of the order and can safely delete only that user’s cart items.
+
+!🔹 If you want to use GraphQL instead of a webhook to clear the cart after checkout, you don’t need an 
+Event Trigger at all — you can do it in one mutation using Hasura’s nested inserts and deletes.
+
+1️⃣ Using a GraphQL mutation for checkout
+Suppose your frontend sends:
+user_id
+delivery info
+cart items (from cart_items table)
+
+You can use insert_orders_one and nested insert into order_items, then optionally delete the cart items 
+for that user in a single mutation.
+
+#for error diagnos
+docker logs spicehub-backend-graphql-engine-1
+
+
+Let’s build the entire professional schema for your online restaurant system, including:
+🧑‍💻 Users (customer, admin, kitchen, rider)
+🛒 Cart
+🍔 Menu categories & items
+🧾 Orders + order_items
+💳 Payments
+👨‍🍳 Kitchen orders
+🛵 Deliveries
+🌟 Reviews
+
+-- Enable UUID generation
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- =====================================
+-- USERS
+-- =====================================
+CREATE TABLE public.users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  phone TEXT UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT CHECK (role IN ('customer', 'admin', 'kitchen', 'rider')) DEFAULT 'customer',
+  avatar_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- =====================================
+-- MENU CATEGORIES
+-- =====================================
+CREATE TABLE public.menu_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  description TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- =====================================
+-- MENU ITEMS
+-- =====================================
+CREATE TABLE public.menu_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id UUID REFERENCES public.menu_categories(id) ON DELETE SET NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  price NUMERIC(10,2) NOT NULL,
+  image_url TEXT,
+  is_available BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- =====================================
+-- CART (user’s temporary cart before placing an order)
+-- =====================================
+CREATE TABLE public.cart_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+  menu_item_id UUID REFERENCES public.menu_items(id) ON DELETE CASCADE,
+  quantity INT NOT NULL CHECK (quantity > 0),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (user_id, menu_item_id)
+);
+
+-- =====================================
+-- ORDERS
+-- =====================================
+CREATE TABLE public.orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+  total_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+  status TEXT CHECK (status IN ('pending', 'preparing', 'ready', 'delivering', 'completed', 'cancelled')) DEFAULT 'pending',
+  payment_status TEXT CHECK (payment_status IN ('unpaid', 'paid', 'refunded')) DEFAULT 'unpaid',
+  delivery_address TEXT NOT NULL,
+  delivery_instructions TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- =====================================
+-- ORDER ITEMS
+-- =====================================
+CREATE TABLE public.order_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID REFERENCES public.orders(id) ON DELETE CASCADE,
+  menu_item_id UUID REFERENCES public.menu_items(id) ON DELETE SET NULL,
+  quantity INT NOT NULL CHECK (quantity > 0),
+  unit_price NUMERIC(10,2) NOT NULL,
+  total_price NUMERIC(10,2) GENERATED ALWAYS AS (quantity * unit_price) STORED
+);
+
+-- =====================================
+-- PAYMENTS
+-- =====================================
+CREATE TABLE public.payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID UNIQUE REFERENCES public.orders(id) ON DELETE CASCADE,
+  method TEXT CHECK (method IN ('cash', 'card', 'mobile_money')) NOT NULL,
+  amount NUMERIC(10,2) NOT NULL,
+  status TEXT CHECK (status IN ('pending', 'completed', 'failed', 'refunded')) DEFAULT 'pending',
+  transaction_id TEXT,
+  paid_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- =====================================
+-- KITCHEN ORDERS
+-- =====================================
+CREATE TABLE public.kitchen_orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID UNIQUE REFERENCES public.orders(id) ON DELETE CASCADE,
+  chef_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+  status TEXT CHECK (status IN ('pending', 'in_progress', 'completed')) DEFAULT 'pending',
+  notes TEXT,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+
+-- =====================================
+-- DELIVERIES
+-- =====================================
+CREATE TABLE public.deliveries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID UNIQUE REFERENCES public.orders(id) ON DELETE CASCADE,
+  rider_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+  status TEXT CHECK (status IN ('pending', 'assigned', 'picked_up', 'delivered', 'cancelled')) DEFAULT 'pending',
+  pickup_time TIMESTAMPTZ,
+  delivery_time TIMESTAMPTZ
+);
+
+Allow pickup_time to be empty initially
+pickup_time should be nullable.
+That’s the realistic approach — both times should be set later as the delivery progresses.
+
+-- =====================================
+-- REVIEWS
+-- =====================================
+CREATE TABLE public.reviews (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID REFERENCES public.orders(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+  rating INT CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+🔗 Relationship Summary (Updated)
+From	Relationship	To	Type
+users	1-to-many	cart_items	user_id
+users	1-to-many	orders	user_id
+orders	1-to-many	order_items	order_id
+orders	1-to-1	payments	order_id
+orders	1-to-1	kitchen_orders	order_id
+orders	1-to-1	deliveries	order_id
+users (chef)	1-to-many	kitchen_orders	chef_id
+users (rider)	1-to-many	deliveries	rider_id
+orders	1-to-many	reviews	order_id
+menu_categories	1-to-many	menu_items	category_id
+
+⚙️ 1. Create a Trigger Function (Reusable for All Tables)
+This function will automatically update updated_at whenever a row is modified.
+
+  # Step 1 — Run this first (only once total)
+  -- Function: auto_update_timestamp
+    CREATE OR REPLACE FUNCTION auto_update_timestamp()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+🟢 This creates the reusable trigger function in your database.
+You only need to run this one time ever — not for each table.
+
+
+  #Step 2 — Then run each trigger separately (one per table)
+  Attach Trigger to Tables That Have updated_at
+  Here’s the trigger setup for all tables that contain an updated_at column.
+    -- USERS
+    CREATE TRIGGER set_timestamp_users
+    BEFORE UPDATE ON public.users
+    FOR EACH ROW
+    EXECUTE FUNCTION auto_update_timestamp();
+
+    -- ORDERS
+    CREATE TRIGGER set_timestamp_orders
+    BEFORE UPDATE ON public.orders
+    FOR EACH ROW
+    EXECUTE FUNCTION auto_update_timestamp();
+
+    -- MENU ITEMS
+    CREATE TRIGGER set_timestamp_menu_items
+    BEFORE UPDATE ON public.menu_items
+    FOR EACH ROW
+    EXECUTE FUNCTION auto_update_timestamp();
+
+    -- MENU CATEGORIES (optional)
+    CREATE TRIGGER set_timestamp_menu_categories
+    BEFORE UPDATE ON public.menu_categories
+    FOR EACH ROW
+    EXECUTE FUNCTION auto_update_timestamp();
+-- You can add more as needed, e.g. reviews, kitchen_orders, deliveries if you add updated_at columns later.
+#The updated_at column will automatically refresh to the current timestamp — no manual update needed.
+
+🧑‍💻 SQL Mock Data Inserts
+-- ✅ Users
+INSERT INTO users (id, full_name, email, phone, password, role, avatar_url)
+VALUES
+  (gen_random_uuid(), 'Admin Manager', 'admin@demo.com', '+251900000001', 'hashed_admin', 'admin', NULL),
+  (gen_random_uuid(), 'Chef Daniel', 'chef@demo.com', '+251900000002', 'hashed_chef', 'kitchen', NULL),
+  (gen_random_uuid(), 'Rider Kofi', 'rider@demo.com', '+251900000003', 'hashed_rider', 'rider', NULL),
+  (gen_random_uuid(), 'Sara Tesfaye', 'sara@demo.com', '+251900000004', 'hashed_sara', 'customer', NULL),
+  (gen_random_uuid(), 'John Michael', 'john@demo.com', '+251900000005', 'hashed_john', 'customer', NULL);
+
+-- ✅ Menu Categories
+INSERT INTO menu_categories (id, name, description)
+VALUES
+  (gen_random_uuid(), 'Burgers', 'Juicy and delicious handmade burgers'),
+  (gen_random_uuid(), 'Drinks', 'Soft drinks and beverages'),
+  (gen_random_uuid(), 'Desserts', 'Sweet treats to end your meal');
+
+-- ✅ Menu Items
+INSERT INTO menu_items (id, name, description, price, category_id, image_url, is_available)
+VALUES
+  (gen_random_uuid(), 'Classic Burger', 'Grilled beef patty with cheese and lettuce', 120.00, (SELECT id FROM menu_categories WHERE name='Burgers'), NULL, TRUE),
+  (gen_random_uuid(), 'Chicken Burger', 'Crispy chicken fillet with mayo', 110.00, (SELECT id FROM menu_categories WHERE name='Burgers'), NULL, TRUE),
+  (gen_random_uuid(), 'Cola', 'Refreshing cold cola', 40.00, (SELECT id FROM menu_categories WHERE name='Drinks'), NULL, TRUE),
+  (gen_random_uuid(), 'Orange Juice', 'Freshly squeezed orange juice', 50.00, (SELECT id FROM menu_categories WHERE name='Drinks'), NULL, TRUE),
+  (gen_random_uuid(), 'Chocolate Cake', 'Rich chocolate layered cake', 80.00, (SELECT id FROM menu_categories WHERE name='Desserts'), NULL, TRUE),
+  (gen_random_uuid(), 'Ice Cream', 'Vanilla ice cream with chocolate syrup', 60.00, (SELECT id FROM menu_categories WHERE name='Desserts'), NULL, TRUE);
+
+-- ✅ Orders
+INSERT INTO orders (id, user_id, total_amount, status, payment_status, delivery_address, delivery_instructions)
+VALUES
+  (gen_random_uuid(), (SELECT id FROM users WHERE email='sara@demo.com'), 310.00, 'confirmed', 'paid', 'Addis Ababa, Bole', 'Leave at gate'),
+  (gen_random_uuid(), (SELECT id FROM users WHERE email='john@demo.com'), 230.00, 'pending', 'unpaid', 'Addis Ababa, CMC', 'Call upon arrival');
+
+-- ✅ Order Items
+INSERT INTO order_items (id, order_id, menu_item_id, quantity, unit_price)
+VALUES
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=310.00), (SELECT id FROM menu_items WHERE name='Classic Burger'), 2, 120.00),
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=310.00), (SELECT id FROM menu_items WHERE name='Cola'), 1, 40.00),
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=230.00), (SELECT id FROM menu_items WHERE name='Chicken Burger'), 2, 110.00);
+
+-- ✅ Payments
+INSERT INTO payments (id, order_id, amount, method, status)
+VALUES
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=310.00), 310.00, 'card', 'paid'),
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=230.00), 230.00, 'cash', 'pending');
+
+-- ✅ Kitchen Orders
+INSERT INTO kitchen_orders (id, order_id, chef_id, status)
+VALUES
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=310.00), (SELECT id FROM users WHERE email='chef@demo.com'), 'preparing'),
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=230.00), (SELECT id FROM users WHERE email='chef@demo.com'), 'pending');
+
+-- ✅ Deliveries
+INSERT INTO deliveries (id, order_id, rider_id, status, estimated_time)
+VALUES
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=310.00), (SELECT id FROM users WHERE email='rider@demo.com'), 'out-for-delivery', NOW() + INTERVAL '30 minutes'),
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=230.00), (SELECT id FROM users WHERE email='rider@demo.com'), 'pending', NOW() + INTERVAL '45 minutes');
+
+-- ✅ Reviews
+INSERT INTO reviews (id, order_id, rating, comment)
+VALUES
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=310.00), 5, 'Excellent food and fast delivery!'),
+  (gen_random_uuid(), (SELECT id FROM orders WHERE total_amount=230.00), 4, 'Good burger but took a bit long.');
+
+-- 🛒 CART TABLE
+CREATE TABLE cart (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  menu_item_id UUID NOT NULL REFERENCES menu_items(id) ON DELETE CASCADE,
+  quantity INT NOT NULL CHECK (quantity > 0),
+  added_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  UNIQUE (user_id, menu_item_id)
+);
+
+-- 🛒 Mock Cart Items
+
+INSERT INTO cart (user_id, menu_item_id, quantity)
+VALUES
+  ((SELECT id FROM users WHERE email='sara@demo.com'),
+   (SELECT id FROM menu_items WHERE name='Classic Burger'), 1),
+
+  ((SELECT id FROM users WHERE email='sara@demo.com'),
+   (SELECT id FROM menu_items WHERE name='Cola'), 2),
+
+  ((SELECT id FROM users WHERE email='john@demo.com'),
+   (SELECT id FROM menu_items WHERE name='Chicken Burger'), 1),
+
+  ((SELECT id FROM users WHERE email='john@demo.com'),
+   (SELECT id FROM menu_items WHERE name='Chocolate Cake'), 1);
+
+⚙️ Optional: Auto-Clear Cart on Checkout
+In production, once an order is placed, you can clear the user’s cart:
+  DELETE FROM cart WHERE user_id = (SELECT id FROM users WHERE email='sara@demo.com');
+Or automate it via backend logic (Hasura action, trigger, or your Express API).
+
+🧠 Optional: Auto-Set paid_at When Status Becomes “paid” or "completed"
+If you want to automate that, you can create a trigger:
+  CREATE OR REPLACE FUNCTION set_paid_at_on_payment_status()
+  RETURNS TRIGGER AS $$
+  BEGIN
+    -- If status is 'paid' or 'completed' and paid_at is not already set
+    IF (NEW.status IN ('paid', 'completed')) AND (NEW.paid_at IS NULL) THEN
+      NEW.paid_at := NOW();
+    END IF;
+    RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+Step 2 — Attach the Trigger to the Payments Table
+  DROP TRIGGER IF EXISTS set_paid_at_trigger ON payments;
+  CREATE TRIGGER set_paid_at_trigger
+  BEFORE INSERT OR UPDATE ON payments
+  FOR EACH ROW
+  EXECUTE FUNCTION set_paid_at_on_payment_status();
+✅So the fix is simple — you need to allow paid_at to be nullable.
+
+✅ Fix Option 1: Auto-generate a transaction ID
+This is the most realistic and clean solution.
+if you prefer readable transaction codes (like TX-20251016120001), you can use a trigger:
+  CREATE OR REPLACE FUNCTION generate_transaction_id()
+  RETURNS TRIGGER AS $$
+  BEGIN
+    IF NEW.transaction_id IS NULL THEN
+      NEW.transaction_id := 'TX-' || TO_CHAR(NOW(), 'YYYYMMDDHH24MISS') || '-' || SUBSTRING(gen_random_uuid()::TEXT, 1, 8);
+    END IF;
+    RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  CREATE TRIGGER set_transaction_id
+  BEFORE INSERT ON payments
+  FOR EACH ROW
+  EXECUTE FUNCTION generate_transaction_id();
+✅Postgres will automatically fill transaction_id.
+
+✅ Fix Option 1 (Recommended): Make started_at nullable
+If you want to insert pending or future orders first, simply allow NULL:
+When a chef starts cooking, that’s when started_at should be set.
+When the meal is ready, you fill in completed_at.
+
+✅ Fix Option 2: Auto-fill started_at when status = 'preparing'
+If you prefer automation like the payments trigger, use this trigger:
+  CREATE OR REPLACE FUNCTION set_started_at_on_preparing()
+  RETURNS TRIGGER AS $$
+  BEGIN
+    IF (NEW.status = 'preparing') AND (NEW.started_at IS NULL) THEN
+      NEW.started_at := NOW();
+    END IF;
+    RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  DROP TRIGGER IF EXISTS set_started_at_trigger ON kitchen_orders;
+
+  CREATE TRIGGER set_started_at_trigger
+  BEFORE INSERT OR UPDATE ON kitchen_orders
+  FOR EACH ROW
+  EXECUTE FUNCTION set_started_at_on_preparing();
+✅ It will auto-set started_at = NOW().
+
+✅ Recommended: Add Smart Trigger Logic
+Let’s add automatic timestamp handling, so you don’t get “null value” errors later.
+🔹 Trigger: Auto-set pickup and delivered times
+
+  CREATE OR REPLACE FUNCTION set_delivery_timestamps()
+  RETURNS TRIGGER AS $$
+  BEGIN
+    -- When rider picks up the order
+    IF NEW.status = 'picked_up' AND NEW.pickup_time IS NULL THEN
+      NEW.pickup_time := NOW();
+    END IF;
+
+    -- When order is delivered
+    IF NEW.status = 'delivered' AND NEW.delivered_time IS NULL THEN
+      NEW.delivered_time := NOW();
+    END IF;
+
+    RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  DROP TRIGGER IF EXISTS set_delivery_timestamps_trigger ON deliveries;
+
+  CREATE TRIGGER set_delivery_timestamps_trigger
+  BEFORE INSERT OR UPDATE ON deliveries
+  FOR EACH ROW
+  EXECUTE FUNCTION set_delivery_timestamps();
+
+✅## if you want fetche data public without auth(logged in)
+Step 1: allow anonymous role in Hasura
+In your Hasura environment config (e.g., docker-compose.yml or .env),
+add these lines:
+  HASURA_GRAPHQL_JWT_SECRET: '{"type": "HS256", "key": "your_nextauth_secret_here"}'
+  HASURA_GRAPHQL_UNAUTHORIZED_ROLE: "anonymous"
+This tells Hasura:
+“If a user doesn’t send a JWT, treat them as anonymous.”
+
+Step 2: add “anonymous” role permissions in Hasura Console
+Go to Hasura Console → Data → menu_items → Permissions:
+Add Role: anonymous
+Check ✅ select permission
+Row filter: {} (no filter — allow all)
+Columns: choose what public should see
+Then click “Save Permissions”.
+Now anyone (even without login) can fetch menu items.

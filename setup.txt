@@ -1,0 +1,215 @@
+WSL2 SETUP(inside WSL2)
+🧩 What the Convenience Script Does
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+docker run hello-world
+
+✅ After Installation
+docker --version
+docker compose version
+
+✅Allow non-sudo usage (optional but convenient):
+sudo usermod -aG docker $USER
+
+✅Restart your terminal, then test:
+docker run hello-world
+
+Then you can build your Hasura setup using:
+Step 1: Get the Compose file & start the containers
+curl https://raw.githubusercontent.com/hasura/graphql-engine/stable/install-manifests/docker-compose/docker-compose.yaml -o docker-compose.yml
+
+Step 2: inside WSL2 Ubuntu shell.
+sudo service docker start
+or
+sudo dockerd &
+
+✅Then check if Docker is alive:
+docker ps
+
+If you get output like:
+CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS   PORTS   NAMES
+Docker Engine is running fine inside WSL2.
+
+🧹 If you ever need to restart Docker inside WSL2
+Do this safely:
+sudo rm -f /var/run/docker.pid
+sudo service docker restart
+
+or if service doesn’t exist:
+
+sudo pkill dockerd
+sudo dockerd &
+
+Step 3: Start Hasura + Postgres:
+🚀 Then you can start Hasura
+From your Hasura project folder (where docker-compose.yml is):
+1. Open your Ubuntu terminal
+2. Go to your Hasura project folder
+cd /mnt/c/Users/Administrator/Documents/spicehub-backend
+
+Then run:
+docker compose up -d
+✅ Docker Engine is running
+✅ This time it will connect to the right Docker engine (inside WSL2) and successfully pull images.
+
+4. Step-by-Step: Use VS Code with WSL2 Docker
+1️⃣ Install “WSL” Extension in VS Code
+Open VS Code → Go to Extensions → search and install:
+WSL
+or
+https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-wsl
+
+2️⃣ Open Your Ubuntu Project in VS Code
+In your Ubuntu terminal (not PowerShell), run:
+    cd /mnt/c/Users/Administrator/Documents/spicehub-backend
+    code .
+This command will open VS Code inside WSL2, connected to your Ubuntu system.
+💡You’ll see “WSL: Ubuntu” at the bottom-left corner of VS Code — that’s perfect.
+
+3️⃣ Now You Can:
+Run: docker compose up -d from VS Code’s integrated terminal
+Edit your docker-compose.yml
+Use Docker extension (optional)
+Work with Hasura containers, just like on Linux
+
+4️⃣ (Optional) Install Docker Extension in VS Code
+If you want to manage containers visually:
+Install Docker extension (by Microsoft) in VS Code.
+It automatically connects to the Docker Engine inside WSL2
+
+It means your entire Hasura + Postgres + Data Connector stack is now up and running inside Docker 🎉
+
+Then restart Hasura:
+    docker compose up -d
+When you finish working:
+    docker compose down
+Optional: Check status
+    docker compose ps
+
+
+⚠️ Only use docker compose down -v if you want to delete the volume and all database data. Otherwise, 
+    your data is safe.
+
+✅Let’s go step by step for exporting and importing your Docker Postgres data when using a named volume 
+like db_data. This works even if you move to another computer.
+Step 0 — Make sure your containers are running
+    docker compose up -d
+    docker ps
+You should see your postgres container running. Let’s assume its name is spicehub-backend-postgres-1.
+
+Step 1 — Export your Postgres volume
+Navigate to your project folder (where docker-compose.yml is).
+
+Run this command:
+    docker run --rm -v db_data:/data -v $(pwd):/backup alpine \
+    tar czf /backup/db_backup.tar.gz -C /data .
+
+✅ Explanation:
+--rm → remove the temporary container after the command finishes.
+-v db_data:/data → mount your Docker volume inside the container at /data.
+-v $(pwd):/backup → mount your current project folder inside the container at /backup.
+tar czf /backup/db_backup.tar.gz -C /data . → create a compressed backup of the volume inside your project folder.
+
+Check your folder:
+    ls -lh db_backup.tar.gz
+You should see a file like db_backup.tar.gz. This contains your entire Postgres database.
+
+Step 2 — Transfer the backup to another computer
+Just copy the db_backup.tar.gz file using USB, cloud storage, or Git (if small and safe).
+
+Step 3 — Import the backup on the new computer
+
+Make sure your project folder on the new computer has a docker-compose.yml with the same volume name (db_data).
+
+Run this command to restore:
+
+docker run --rm -v db_data:/data -v $(pwd):/backup alpine \
+  tar xzf /backup/db_backup.tar.gz -C /data
+
+
+✅ Explanation:
+This mounts the new db_data volume inside a temporary Alpine container and extracts the backup into it.
+Start your containers:
+    docker compose up -d
+Verify that your database is restored:
+    docker exec -it spicehub-backend-postgres-1 psql -U postgres -c "\l"
+You should see all your databases and tables.
+
+Optional Tip
+You can make two simple scripts to make this faster:
+backup.sh
+    #!/bin/bash
+    docker run --rm -v db_data:/data -v $(pwd):/backup alpine \
+    tar czf /backup/db_backup.tar.gz -C /data .
+    echo "Backup saved as db_backup.tar.gz"
+
+
+restore.sh
+    #!/bin/bash
+    docker run --rm -v db_data:/data -v $(pwd):/backup alpine \
+    tar xzf /backup/db_backup.tar.gz -C /data
+    echo "Backup restored to db_data volume"
+
+Then just run:
+./backup.sh
+./restore.sh
+
+✅ Usage
+Export (Backup)
+    ./backup.sh
+Creates db_backup.tar.gz in your project folder.
+You can now move this file to another computer, server, or keep it safe.
+
+Import (Restore)
+    ./restore.sh
+
+Restores the contents of db_backup.tar.gz into the Docker volume.
+After running, start your containers:
+    docker compose up -d
+Your database will have all the tables, users, and data exactly as when you backed it up.
+
+💡 Notes:
+These scripts work even if the volume doesn’t exist yet — Docker will create it automatically.
+You don’t need to touch the local folder ./db_data at all — the volume is fully managed by Docker.
+This method is cross-platform — you can move db_backup.tar.gz to any PC with Docker and restore it safely.
+
+✅one-command method to backup and restore your Docker Postgres database without writing separate scripts.
+1️⃣ Backup (Export) in one command
+From your project folder, run:
+    docker run --rm -v db_data:/data -v $(pwd):/backup alpine \
+    sh -c "tar czf /backup/db_backup.tar.gz -C /data ."
+
+✅ This will:
+Take all data from the Docker volume db_data
+Compress it into db_backup.tar.gz in your project folder
+Clean up the temporary container automatically (--rm)
+
+Check the file:
+    ls -lh db_backup.tar.gz
+
+2️⃣ Restore (Import) in one command
+On the same computer or a new computer (with the same docker-compose.yml), run:
+    docker run --rm -v db_data:/data -v $(pwd):/backup alpine \
+    sh -c "tar xzf /backup/db_backup.tar.gz -C /data"
+
+✅ This will:
+Extract all data from db_backup.tar.gz
+Restore it into the Docker volume db_data
+Make your Postgres container see the exact same database as before
+Then start your containers:
+    docker compose up -d
+Check your data:
+    docker exec -it spicehub-backend-postgres-1 psql -U postgres -c "\l"
+
+🔹 Notes
+You can move db_backup.tar.gz between computers or servers.
+You don’t need to manually touch volumes or folders.
+It works cross-platform (Windows, Mac, Linux) as long as Docker is installed.
+
+Drop All Tables
+
+In Hasura SQL editor:
+    DROP SCHEMA public CASCADE;
+    CREATE SCHEMA public;
+    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+⚠️ This will delete everything (tables, data, relationships, triggers).
