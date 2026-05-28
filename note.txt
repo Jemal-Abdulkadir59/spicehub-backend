@@ -681,3 +681,69 @@ Row filter: {} (no filter — allow all)
 Columns: choose what public should see
 Then click “Save Permissions”.
 Now anyone (even without login) can fetch menu items.
+
+**********************************************************
+🎯 Now: Backup your database
+🔥 Step 1: Find DB details
+
+Most likely (default for Hasura setups):
+
+User: postgres
+DB name: postgres OR something like spicehub
+
+If not sure, check your docker-compose.yml
+
+✅ Step 2: Backup PostgreSQL
+
+Run this:
+
+docker exec -t spicehub-backend-postgres-1 pg_dump -U postgres postgres > backup.sql
+
+👉 This will create:
+
+backup.sql
+
+in your current folder:
+
+/mnt/c/Users/Administrator/Documents/spicehub-backend
+📦 What you just did
+
+✔️ Exported ALL database data
+✔️ This file contains:
+
+tables
+data
+schema
+
+👉 This is your real backup
+
+✅ Step 3: Save it safely
+
+Move it to Desktop (or USB / cloud):
+
+cp backup.sql /mnt/c/Users/Administrator/Desktop/
+🚀 On NEW laptop (restore)
+
+After running Docker:
+
+docker compose up -d
+
+Then restore:
+
+docker exec -i spicehub-backend-postgres-1 psql -U postgres postgres < backup.sql
+⚠️ VERY IMPORTANT (check this)
+🔍 Confirm DB name
+
+Run:
+
+docker exec -it spicehub-backend-postgres-1 psql -U postgres
+
+Then inside:
+
+\l
+
+👉 This shows database names
+
+If your DB is spicehub, then use:
+
+pg_dump -U postgres spicehub > backup.sql
