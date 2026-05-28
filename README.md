@@ -6,7 +6,6 @@ Backend service for the **SpiceHub** application built using modern technologies
 
 ## 📦 Tech Stack
 
-* Node.js / Express (if used)
 * PostgreSQL (Dockerized)
 * Hasura GraphQL Engine
 * Docker & Docker Compose
